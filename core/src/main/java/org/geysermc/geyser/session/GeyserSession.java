@@ -1235,7 +1235,10 @@ public class GeyserSession implements GeyserConnection, GeyserCommandSource {
 
             // Disconnect upstream if necessary
             if (!upstream.isClosed()) {
-                upstream.disconnect(disconnectEvent.disconnectReason());
+                String disconnectReason = disconnectEvent.disconnectReason();
+                // Bedrock kick screens don't render § color codes, so strip them to show plain text
+                disconnectReason = disconnectReason.replaceAll("§.", "");
+                upstream.disconnect(disconnectReason);
             }
 
             // Remove from session manager
