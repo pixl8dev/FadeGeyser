@@ -142,7 +142,7 @@ public class SessionPlayerEntity extends PlayerEntity {
      * The vehicle that player was previously in before it got removed from the world.
      */
     @Getter @Setter
-    private Integer removedPlayerVehicleId = null;
+    private @Nullable Integer removedPlayerVehicleId = null;
 
     public SessionPlayerEntity(GeyserSession session) {
         super(new EntitySpawnContext(session, EntityDefinitions.PLAYER, -1, null), null, null);
@@ -351,6 +351,16 @@ public class SessionPlayerEntity extends PlayerEntity {
             maxHealth += 1;
         }
         return super.createHealthAttribute();
+    }
+
+    @Override
+    protected boolean hasEnderEye(boolean offhand) {
+        // Must be overridden to point to the player's inventory cache
+        if (offhand) {
+            return session.getPlayerInventory().getOffhand().is(Items.ENDER_EYE);
+        } else {
+            return session.getPlayerInventory().getItemInHand().is(Items.ENDER_EYE);
+        }
     }
 
     @Override
