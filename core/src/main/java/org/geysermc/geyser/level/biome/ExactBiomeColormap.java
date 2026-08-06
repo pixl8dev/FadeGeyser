@@ -39,11 +39,12 @@ import java.util.Map;
 import java.util.Objects;
 
 /**
- * Exact grass/foliage colors for custom biomes via network climate → colormap sampling.
+ * Exact grass/foliage/dry-foliage colors for custom biomes via network climate → colormap sampling.
  * <p>
  * Bedrock multiplayer reliably applies {@code mapWaterColor} from BiomeDefinitionList, but
- * {@code client_biomes} grass_appearance often does not stick for custom network IDs even with a BP.
- * Vanilla and Bedrock sample {@code textures/colormap/grass.png} / {@code foliage.png} using:
+ * {@code client_biomes} grass/foliage appearance often does not stick for custom network IDs even with a BP.
+ * Vanilla and Bedrock sample {@code textures/colormap/grass.png}, {@code foliage.png}, and
+ * {@code dry_foliage.png} (leaf litter) using:
  * <pre>
  *   x = (1 - temperature) * 255
  *   y = (1 - downfall * temperature) * 255
@@ -51,6 +52,9 @@ import java.util.Objects;
  * We keep the vanilla base colormaps (so {@code minecraft:*} biomes in a vanilla dimension look normal),
  * write each custom biome's exact Java hex into a reserved coordinate band, and set that biome's
  * network temperature/downfall so sampling hits that pixel — bit-exact RGB, not approximate.
+ * <p>
+ * Dry foliage is colormap-only (not {@code minecraft:dry_foliage_color} in client_biomes), which
+ * previously caused Bedrock Block crashes on some clients.
  */
 public final class ExactBiomeColormap {
     private static final int SIZE = 256;
@@ -64,6 +68,7 @@ public final class ExactBiomeColormap {
     private final Map<String, Climate> climateByBedrockId = new LinkedHashMap<>();
     private byte[] grassPng = new byte[0];
     private byte[] foliagePng = new byte[0];
+    private byte[] dryFoliagePng = new byte[0];
 
     public record Climate(float temperature, float downfall) {
     }
@@ -75,9 +80,11 @@ public final class ExactBiomeColormap {
         climateByBedrockId.clear();
         BufferedImage grass = loadBase("bedrock/colormap/grass.png");
         BufferedImage foliage = loadBase("bedrock/colormap/foliage.png");
+        BufferedImage dryFoliage = loadBase("bedrock/colormap/dry_foliage.png");
 
         int slot = 0;
-        // One slot per custom-network biome (exact grass + foliage at same pixel).
+        int dryExplicit = 0;
+        // One slot per custom-network biome (exact grass + foliage + dry foliage at same pixel).
         // Vanilla overrides keep stock climate — only client_biomes for those.
         for (CustomBiomeDefinition def : biomes) {
             if (!def.customNetworkId()) {
@@ -89,20 +96,31 @@ public final class ExactBiomeColormap {
             int foliageRgb = def.foliageColor() != null
                     ? def.foliageColor()
                     : JavaBiomeEffectsParser.approximateFoliageColor(def.temperature(), def.downfall());
+            int dryRgb;
+            if (def.dryFoliageColor() != null) {
+                dryRgb = def.dryFoliageColor();
+                dryExplicit++;
+            } else {
+                // Match vanilla sampling of dry_foliage.png at the biome's natural climate.
+                dryRgb = sampleColormap(dryFoliage, def.temperature(), def.downfall());
+            }
 
             int[] xy = slotToXy(slot++);
             int x = xy[0];
             int y = xy[1];
             grass.setRGB(x, y, 0xFF000000 | (grassRgb & 0xFFFFFF));
             foliage.setRGB(x, y, 0xFF000000 | (foliageRgb & 0xFFFFFF));
+            dryFoliage.setRGB(x, y, 0xFF000000 | (dryRgb & 0xFFFFFF));
             climateByBedrockId.put(def.bedrockIdentifier(), climateFromXy(x, y));
         }
 
         grassPng = toPng(grass);
         foliagePng = toPng(foliage);
+        dryFoliagePng = toPng(dryFoliage);
         GeyserImpl.getInstance().getLogger().info(
                 "Exact biome colormaps: " + climateByBedrockId.size()
-                        + " custom biomes with pixel-exact grass/foliage (vanilla colormap base preserved).");
+                        + " custom biomes with pixel-exact grass/foliage/dry_foliage"
+                        + " (" + dryExplicit + " explicit dry_foliage_color; vanilla colormap bases preserved).");
     }
 
     public @Nullable Climate climateFor(String bedrockIdentifier) {
@@ -117,8 +135,20 @@ public final class ExactBiomeColormap {
         return foliagePng;
     }
 
+    public byte[] dryFoliagePng() {
+        return dryFoliagePng;
+    }
+
     public boolean hasData() {
-        return !climateByBedrockId.isEmpty() && grassPng.length > 0;
+        return !climateByBedrockId.isEmpty() && grassPng.length > 0 && dryFoliagePng.length > 0;
+    }
+
+    /** Sample a 256×256 colormap at Java climate coordinates. */
+    static int sampleColormap(BufferedImage map, float temperature, float downfall) {
+        int[] xy = xyFromClimate(temperature, downfall);
+        int x = Math.max(0, Math.min(SIZE - 1, xy[0]));
+        int y = Math.max(0, Math.min(SIZE - 1, xy[1]));
+        return map.getRGB(x, y) & 0xFFFFFF;
     }
 
     private static int[] slotToXy(int slot) {

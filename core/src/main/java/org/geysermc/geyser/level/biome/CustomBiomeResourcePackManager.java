@@ -61,12 +61,12 @@ import java.util.zip.ZipOutputStream;
  */
 public final class CustomBiomeResourcePackManager {
     /**
-     * v9: exact grass/foliage via textures/colormap + climate (client_biomes grass often ignored for custom IDs).
+     * v10: exact grass/foliage/dry_foliage (leaf litter) via colormaps + climate.
      */
-    public static final UUID PACK_UUID = UUID.fromString("c0a1b2c3-d4e5-6789-abcd-ef012345678b");
+    public static final UUID PACK_UUID = UUID.fromString("c0a1b2c3-d4e5-6789-abcd-ef012345678c");
 
     private static final String PACK_NAME = "Geyser Custom Biomes";
-    private static final String PACK_DESCRIPTION = "Exact per-biome grass/foliage/water colors from Java datapacks";
+    private static final String PACK_DESCRIPTION = "Exact per-biome grass/foliage/leaf-litter/water colors from Java datapacks";
     private static final String MODULE_UUID = "d1b2c3d4-e5f6-7890-bcde-f01234567892";
     private static final String CLIENT_BIOME_FORMAT_VERSION = "1.21.60";
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().disableHtmlEscaping().create();
@@ -198,6 +198,8 @@ public final class CustomBiomeResourcePackManager {
                 if (!waterOnly && colormap.hasData()) {
                     putBytes(zos, "textures/colormap/grass.png", colormap.grassPng());
                     putBytes(zos, "textures/colormap/foliage.png", colormap.foliagePng());
+                    // Leaf litter (and similar) — not dry_foliage_color in client_biomes (iOS Block).
+                    putBytes(zos, "textures/colormap/dry_foliage.png", colormap.dryFoliagePng());
                 }
                 for (CustomBiomeDefinition def : byBedrockId.values()) {
                     writeClientBiomeFiles(zos, def, waterOnly);
@@ -380,11 +382,12 @@ public final class CustomBiomeResourcePackManager {
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
             digest.update(CLIENT_BIOME_FORMAT_VERSION.getBytes(StandardCharsets.UTF_8));
-            digest.update("exact-v9-colormap".getBytes(StandardCharsets.UTF_8));
+            digest.update("exact-v10-dry-foliage".getBytes(StandardCharsets.UTF_8));
             for (CustomBiomeDefinition def : biomes) {
                 digest.update(def.bedrockIdentifier().getBytes(StandardCharsets.UTF_8));
                 digest.update(String.valueOf(def.grassColor()).getBytes(StandardCharsets.UTF_8));
                 digest.update(String.valueOf(def.foliageColor()).getBytes(StandardCharsets.UTF_8));
+                digest.update(String.valueOf(def.dryFoliageColor()).getBytes(StandardCharsets.UTF_8));
                 digest.update(String.valueOf(def.waterColor()).getBytes(StandardCharsets.UTF_8));
                 digest.update(String.valueOf(def.bedrockId()).getBytes(StandardCharsets.UTF_8));
                 digest.update(String.valueOf(def.customNetworkId()).getBytes(StandardCharsets.UTF_8));

@@ -24,8 +24,8 @@ Java registry / Terralith.zip
         │
         └─ terralith:*  → custom ID 30000+
                            ├─ Behavior pack biomes/*.json   (register identifier)
-                           ├─ Resource pack textures/colormap/grass.png + foliage.png
-                           │     (exact Java RGB at reserved pixels; vanilla base preserved)
+                           ├─ Resource pack textures/colormap/grass.png + foliage.png + dry_foliage.png
+                           │     (exact Java RGB at reserved pixels; leaf litter via dry_foliage)
                            ├─ BiomeDefinitionList climate → those pixels + exact mapWaterColor
                            └─ client_biomes/*.json          (exact hex backup)
 ```
