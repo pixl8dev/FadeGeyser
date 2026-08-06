@@ -36,6 +36,7 @@ import org.geysermc.mcprotocollib.protocol.data.game.chunk.palette.SingletonPale
 import it.unimi.dsi.fastutil.ints.IntArrayList;
 import it.unimi.dsi.fastutil.ints.IntList;
 import it.unimi.dsi.fastutil.ints.IntLists;
+import org.geysermc.geyser.level.biome.CustomBiomeRegistry;
 import org.geysermc.geyser.level.chunk.BlockStorage;
 import org.geysermc.geyser.level.chunk.bitarray.BitArray;
 import org.geysermc.geyser.level.chunk.bitarray.BitArrayVersion;
@@ -47,8 +48,15 @@ import org.geysermc.geyser.session.GeyserSession;
 public class BiomeTranslator {
 
     public static int loadServerBiome(RegistryEntryContext entry) {
-        String javaIdentifier = entry.id().asString();
-        return Registries.BIOME_IDENTIFIERS.get().getOrDefault(javaIdentifier, 0);
+        // Register custom biomes / color overrides from the Java registry packet, and map to Bedrock IDs.
+        int bedrockId = CustomBiomeRegistry.get().resolveBedrockId(entry);
+        // NEVER rebuild BP/RP synchronously here — the Java biome registry has 100+ entries and
+        // rebuilding packs per-entry freezes the Geyser player thread until Java times out
+        // (Bedrock sees "end of stream"). Debounce a single async refresh for later joins.
+        if (CustomBiomeRegistry.get().isPackDirty()) {
+            CustomBiomeRegistry.get().schedulePackRefresh();
+        }
+        return bedrockId;
     }
 
     public static BlockStorage toNewBedrockBiome(GeyserSession session, DataPalette biomeData) {

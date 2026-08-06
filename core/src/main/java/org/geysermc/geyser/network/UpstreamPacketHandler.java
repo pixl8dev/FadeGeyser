@@ -26,6 +26,7 @@
 package org.geysermc.geyser.network;
 
 import io.netty.buffer.Unpooled;
+import org.checkerframework.checker.nullness.qual.Nullable;
 import org.cloudburstmc.math.vector.Vector2f;
 import org.cloudburstmc.protocol.bedrock.BedrockDisconnectReasons;
 import org.cloudburstmc.protocol.bedrock.codec.BedrockCodec;
@@ -224,6 +225,9 @@ public class UpstreamPacketHandler extends LoggingPacketHandler {
         session.sendUpstreamPacket(playStatus);
 
         this.resourcePackLoadEvent = new SessionLoadResourcePacksEventImpl(session);
+        // Ensure auto-generated custom biome BP + color RP are present (additive; does not remove packs/).
+        org.geysermc.geyser.level.biome.CustomBiomeBehaviorPackManager.createOrUpdateBehaviorPack();
+        org.geysermc.geyser.level.biome.CustomBiomeResourcePackManager.registerWithSessionEvent(this.resourcePackLoadEvent);
         this.geyser.eventBus().fireEventElseKick(this.resourcePackLoadEvent, session);
         if (session.isClosed()) {
             // Can happen if an error occurs in the resource pack event; that'll disconnect the player
@@ -233,10 +237,18 @@ public class UpstreamPacketHandler extends LoggingPacketHandler {
 
         ResourcePacksInfoPacket resourcePacksInfo = new ResourcePacksInfoPacket();
         resourcePacksInfo.getResourcePackInfos().addAll(this.resourcePackLoadEvent.infoPacketEntries());
+        // Behavior pack: registers custom biome identifiers so client_biomes grass/foliage work 1:1
+        ResourcePacksInfoPacket.Entry biomeBpInfo =
+                org.geysermc.geyser.level.biome.CustomBiomeBehaviorPackManager.infoPacketEntry();
+        if (biomeBpInfo != null) {
+            resourcePacksInfo.getBehaviorPackInfos().add(biomeBpInfo);
+            resourcePacksInfo.setHasAddonPacks(true);
+        }
         resourcePacksInfo.setVibrantVisualsForceDisabled(!session.isAllowVibrantVisuals());
 
-        resourcePacksInfo.setForcedToAccept(GeyserImpl.getInstance().config().gameplay().forceResourcePacks() ||
-            resourcePackLoadEvent.isIntegratedPackActive());
+        boolean forcePacks = GeyserImpl.getInstance().config().gameplay().forceResourcePacks() ||
+            resourcePackLoadEvent.isIntegratedPackActive() || biomeBpInfo != null;
+        resourcePacksInfo.setForcedToAccept(forcePacks);
         resourcePacksInfo.setWorldTemplateId(new UUID(0, 0));
         resourcePacksInfo.setWorldTemplateVersion("");
 
@@ -280,9 +292,20 @@ public class UpstreamPacketHandler extends LoggingPacketHandler {
             case HAVE_ALL_PACKS -> {
                 ResourcePackStackPacket stackPacket = new ResourcePackStackPacket();
                 stackPacket.setExperimentsPreviouslyToggled(false);
-                stackPacket.setForcedToAccept(false); // Leaving this as false allows the player to choose to download or not
+                ResourcePackStackPacket.Entry biomeBpStack =
+                        org.geysermc.geyser.level.biome.CustomBiomeBehaviorPackManager.stackPacketEntry();
+                // Force accept when we ship a biome BP so colors apply for everyone
+                stackPacket.setForcedToAccept(biomeBpStack != null);
                 stackPacket.setGameVersion("*");
                 stackPacket.getResourcePacks().addAll(this.resourcePackLoadEvent.orderedPacks());
+                if (biomeBpStack != null) {
+                    stackPacket.getBehaviorPacks().add(biomeBpStack);
+                    // Enable biome experiments on the pack stack for clients that still gate custom biomes
+                    stackPacket.getExperiments().add(
+                            new org.cloudburstmc.protocol.bedrock.data.ExperimentData("data_driven_biomes", true));
+                    stackPacket.getExperiments().add(
+                            new org.cloudburstmc.protocol.bedrock.data.ExperimentData("custom_biomes", true));
+                }
 
                 session.sendUpstreamPacket(stackPacket);
             }
@@ -360,7 +383,7 @@ public class UpstreamPacketHandler extends LoggingPacketHandler {
             return;
         }
 
-        ResourcePackHolder holder = this.resourcePackLoadEvent.getPacks().get(packet.getPackId());
+        ResourcePackHolder holder = resolvePackHolder(packet.getPackId());
         if (holder == null) {
             GeyserImpl.getInstance().getLogger().debug("Client %s tried to request pack id %s not sent to it!",
                 session.bedrockUsername(), packet.getPackId());
@@ -437,7 +460,7 @@ public class UpstreamPacketHandler extends LoggingPacketHandler {
             return;
         }
 
-        ResourcePackHolder holder = this.resourcePackLoadEvent.getPacks().get(packId);
+        ResourcePackHolder holder = resolvePackHolder(packId);
         if (holder == null) {
             GeyserImpl.getInstance().getLogger().debug("Client %s tried to request pack id %s not sent to it!",
                 session.bedrockUsername(), id);
@@ -457,8 +480,26 @@ public class UpstreamPacketHandler extends LoggingPacketHandler {
         data.setHash(codec.sha256());
         data.setPackVersion(packID[1]);
         data.setPremium(false);
-        data.setType(ResourcePackType.RESOURCES);
+        // Behavior packs use DATA_ADD_ON; resource packs use RESOURCES
+        data.setType(org.geysermc.geyser.level.biome.CustomBiomeBehaviorPackManager.isOurPack(packId)
+                ? ResourcePackType.DATA_ADD_ON
+                : ResourcePackType.RESOURCES);
 
         session.sendUpstreamPacket(data);
     }
+
+    /**
+     * Resolve a pack by UUID from the session resource packs or the custom biome behavior pack.
+     */
+    private @Nullable ResourcePackHolder resolvePackHolder(UUID packId) {
+        ResourcePackHolder holder = this.resourcePackLoadEvent.getPacks().get(packId);
+        if (holder != null) {
+            return holder;
+        }
+        if (org.geysermc.geyser.level.biome.CustomBiomeBehaviorPackManager.isOurPack(packId)) {
+            return org.geysermc.geyser.level.biome.CustomBiomeBehaviorPackManager.getOrLoadHolder();
+        }
+        return null;
+    }
 }
+

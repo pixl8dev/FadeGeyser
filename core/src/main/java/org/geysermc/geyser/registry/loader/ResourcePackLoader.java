@@ -120,6 +120,13 @@ public class ResourcePackLoader implements RegistryLoader<Path, Map<UUID, Resour
             resourcePacks.add(skullResourcePack);
         }
 
+        // Add auto-generated custom biome BP + RP (alongside packs/ — does not replace user packs)
+        org.geysermc.geyser.level.biome.CustomBiomeBehaviorPackManager.createOrUpdateBehaviorPack();
+        Path biomeColorPack = org.geysermc.geyser.level.biome.CustomBiomeResourcePackManager.createOrUpdateResourcePack();
+        if (biomeColorPack != null) {
+            resourcePacks.add(biomeColorPack);
+        }
+
         //noinspection deprecation - we know
         GeyserLoadResourcePacksEvent event = new GeyserLoadResourcePacksEvent(resourcePacks);
         GeyserImpl.getInstance().eventBus().fire(event);
@@ -128,7 +135,12 @@ public class ResourcePackLoader implements RegistryLoader<Path, Map<UUID, Resour
 
         for (Path path : event.resourcePacks()) {
             try {
-                defineEvent.register(readPack(path).build());
+                // Biome color pack gets high priority so client_biomes win over conflicting user packs
+                if (path.equals(biomeColorPack)) {
+                    defineEvent.register(readPack(path).build(), org.geysermc.geyser.api.pack.option.PriorityOption.HIGH);
+                } else {
+                    defineEvent.register(readPack(path).build());
+                }
             } catch (Exception e) {
                 GeyserImpl.getInstance().getLogger().error(GeyserLocale.getLocaleStringLog("geyser.resource_pack.broken", path));
                 e.printStackTrace();

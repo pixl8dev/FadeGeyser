@@ -352,6 +352,38 @@ public interface GeyserConfig {
         @Comment("The radius in blocks around the player in which custom skulls are displayed.")
         @DefaultNumeric(32)
         int customSkullRenderDistance();
+
+        @Comment("""
+            When enabled, Geyser automatically maps custom Java biomes (from datapacks/mods) to Bedrock custom biome IDs
+            and generates a resource pack with per-biome grass, foliage, and water colors.
+            Biome colors are learned from Java registry packets; optional datapack-paths can pre-warm the pack before the first join.
+            The generated pack is sent in addition to anything in the packs/ folder and does not replace user packs.""")
+        @DefaultBoolean(true)
+        boolean enableCustomBiomes();
+
+        @Comment("""
+            When enable-custom-biomes is true, also generate and send a Bedrock resource pack with per-biome colors.
+            Set false to only remap biome network IDs (and water via BiomeDefinitionList) without a client resource pack.
+            Useful for isolating join crashes — enable mapping first, then the pack.""")
+        @DefaultBoolean(true)
+        boolean generateCustomBiomeResourcePack();
+
+        @Comment("""
+            How much color data to put in the custom biome resource pack.
+            - "none": do not generate a pack (same as generate-custom-biome-resource-pack: false)
+            - "water": biomes_client.json + water/sky in client_biomes only (no grass/foliage) — safest next step after mapping
+            - "full": grass, foliage, water, and sky colors
+            Stepwise: mapping only → water → full.""")
+        @DefaultString("full")
+        String customBiomePackMode();
+
+        @Comment("""
+            Optional list of Java datapack zip/jar paths or folders to scan at startup for biome colors
+            (e.g. Terralith). Pre-warms the custom biome resource pack so the first Bedrock join already has grass/foliage colors.
+            Leave empty to rely only on Java registry packets (colors for grass/foliage apply from the second join onward after discovery).""")
+        default List<String> customBiomeDatapackPaths() {
+            return Collections.emptyList();
+        }
     }
 
     @ConfigSerializable

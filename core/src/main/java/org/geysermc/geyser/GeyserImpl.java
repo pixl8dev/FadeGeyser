@@ -323,6 +323,14 @@ public class GeyserImpl implements GeyserApi, EventRegistrar {
 
         SkinProvider.registerCacheImageTask(this);
 
+        // Custom biomes: load persisted IDs, optional datapack pre-warm, then resource packs (so the color pack is included).
+        org.geysermc.geyser.level.biome.CustomBiomeRegistry customBiomes = org.geysermc.geyser.level.biome.CustomBiomeRegistry.get();
+        customBiomes.setEnabled(config.gameplay().enableCustomBiomes());
+        customBiomes.loadPersistedIds();
+        if (config.gameplay().enableCustomBiomes()) {
+            org.geysermc.geyser.level.biome.DatapackBiomeConverter.prewarmFromConfig(config.gameplay().customBiomeDatapackPaths());
+        }
+
         Registries.RESOURCE_PACKS.load();
         Registries.WAYPOINT_STYLE_MAPPINGS.load();
 

@@ -953,7 +953,8 @@ public class GeyserSession implements GeyserConnection, GeyserCommandSource {
      */
     private void sendRegistryDefinitions() {
         BiomeDefinitionListPacket biomeDefinitionListPacket = new BiomeDefinitionListPacket();
-        biomeDefinitionListPacket.setBiomes(Registries.BIOMES.get());
+        // Merge vanilla Bedrock biome defs with any custom biomes registered from the Java server/datapacks.
+        biomeDefinitionListPacket.setBiomes(org.geysermc.geyser.level.biome.CustomBiomeRegistry.get().buildBiomeDefinitions());
         upstream.sendPacket(biomeDefinitionListPacket);
 
         AvailableEntityIdentifiersPacket entityPacket = new AvailableEntityIdentifiersPacket();
@@ -2085,6 +2086,12 @@ public class GeyserSession implements GeyserConnection, GeyserCommandSource {
         startGamePacket.getExperiments().add(new ExperimentData("upcoming_creator_features", true));
         // Needed for certain molang queries used in blocks and items
         startGamePacket.getExperiments().add(new ExperimentData("experimental_molang_features", true));
+        // Custom biomes via behavior pack (grass/foliage client_biomes for datapack biomes)
+        if (org.geysermc.geyser.level.biome.CustomBiomeRegistry.get().isEnabled()
+                && !org.geysermc.geyser.level.biome.CustomBiomeRegistry.get().customNetworkBiomes().isEmpty()) {
+            startGamePacket.getExperiments().add(new ExperimentData("data_driven_biomes", true));
+            startGamePacket.getExperiments().add(new ExperimentData("custom_biomes", true));
+        }
     }
 
     private void syncEntityProperties() {
