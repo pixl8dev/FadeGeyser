@@ -32,7 +32,9 @@ import org.geysermc.geyser.api.event.lifecycle.GeyserDefineCustomSkullsEvent;
 import org.geysermc.geyser.api.item.custom.v2.CustomItemDefinition;
 import org.geysermc.geyser.api.util.Identifier;
 import org.geysermc.geyser.api.waypoint.CustomWaypointStyle;
+import org.geysermc.geyser.level.biome.BiomeMappingEntry;
 import org.geysermc.geyser.registry.mappings.util.CustomBlockMapping;
+import org.geysermc.geyser.registry.mappings.versions.biome.BiomeMappingsReader_v1;
 import org.geysermc.geyser.registry.mappings.versions.block.BlockMappingsReader_v1;
 import org.geysermc.geyser.registry.mappings.versions.item.ItemMappingsReader_v1;
 import org.geysermc.geyser.registry.mappings.versions.item.ItemMappingsReader_v2;
@@ -52,6 +54,12 @@ public record MappingsType<K, V>(String name, Int2ObjectMap<MappingsReader<K, V>
         .with(1, new SkullMappingsReader_v1()));
     public static final MappingsType<Identifier, CustomWaypointStyle> WAYPOINT_STYLES = create("waypoint_styles", builder -> builder
         .with(1, new WaypointStyleMappingsReader_v1()));
+    /**
+     * Custom biome colors (grass / foliage / dry foliage / water) from {@code custom_mappings/*.json}.
+     * Same directory and {@code format_version} pattern as items and skulls.
+     */
+    public static final MappingsType<String, BiomeMappingEntry> BIOMES = create("biomes", builder -> builder
+        .with(1, new BiomeMappingsReader_v1()));
     
     private static <K, V> MappingsType<K, V> create(String name, UnaryOperator<Builder<K, V>> builder) {
         return new MappingsType<>(name, Int2ObjectMaps.unmodifiable(builder.apply(new Builder<>()).readers));

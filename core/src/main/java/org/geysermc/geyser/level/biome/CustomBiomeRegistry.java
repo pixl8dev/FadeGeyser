@@ -30,7 +30,6 @@ import com.google.gson.GsonBuilder;
 import com.google.gson.reflect.TypeToken;
 import it.unimi.dsi.fastutil.objects.Object2IntMap;
 import it.unimi.dsi.fastutil.objects.Object2IntOpenHashMap;
-import org.cloudburstmc.nbt.NbtMap;
 import org.cloudburstmc.protocol.bedrock.data.biome.BiomeDefinitionData;
 import org.cloudburstmc.protocol.bedrock.data.biome.BiomeDefinitions;
 import org.geysermc.geyser.GeyserImpl;
@@ -43,6 +42,8 @@ import java.io.Writer;
 import java.lang.reflect.Type;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import org.checkerframework.checker.nullness.qual.Nullable;
+
 import java.util.Collection;
 import java.util.Collections;
 import java.util.LinkedHashMap;
@@ -54,12 +55,15 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * Tracks custom / overridden biomes from Java registry packets or datapack conversion.
+ * Tracks custom / overridden biomes for Bedrock color packs.
  * <p>
- * <b>Vanilla-safe:</b> {@code minecraft:*} biomes keep their normal Bedrock network IDs.
- * Only non-vanilla biomes (e.g. Terralith) get custom network IDs ({@link #CUSTOM_BIOME_ID_START}+),
- * a generated behavior pack, exact water via {@code mapWaterColor}, and exact grass/foliage via
- * reserved colormap pixels + climate.
+ * <b>Source:</b> JSON files in {@code custom_mappings/} under the {@code "biomes"} key only
+ * (same pattern as custom items). No Paper registry or datapack auto-scan.
+ * <p>
+ * <b>Vanilla-safe:</b> {@code minecraft:*} biomes keep their normal Bedrock network IDs unless a
+ * mapping explicitly recolors them. Mapped non-vanilla biomes get custom network IDs
+ * ({@link #CUSTOM_BIOME_ID_START}+), a generated behavior pack, exact water via
+ * {@code mapWaterColor}, and exact grass/foliage/dry-foliage via reserved colormap pixels.
  */
 public final class CustomBiomeRegistry {
     public static final int CUSTOM_BIOME_ID_START = 30_000;
@@ -70,6 +74,8 @@ public final class CustomBiomeRegistry {
     private static final CustomBiomeRegistry INSTANCE = new CustomBiomeRegistry();
 
     private final Map<String, CustomBiomeDefinition> definitions = new ConcurrentHashMap<>();
+    /** Biomes defined by custom_mappings (authoritative colors). */
+    private final Map<String, BiomeMappingEntry> mappingEntries = new ConcurrentHashMap<>();
     private final Object2IntMap<String> idMap = new Object2IntOpenHashMap<>();
     private final AtomicInteger nextId = new AtomicInteger(CUSTOM_BIOME_ID_START);
     private final AtomicBoolean dirty = new AtomicBoolean(false);
@@ -128,6 +134,98 @@ public final class CustomBiomeRegistry {
         }
     }
 
+    /**
+     * Load biome color mappings from {@code custom_mappings/*.json} (same directory as custom items).
+     * Mapping files are the primary way to supply exact grass/foliage/water/dry-foliage colors.
+     */
+    public void loadFromCustomMappings() {
+        if (!enabled) {
+            return;
+        }
+        mappingEntries.clear();
+        org.geysermc.geyser.registry.mappings.MappingsConfigReader.loadCustomMappingsFromJson(
+                org.geysermc.geyser.registry.mappings.MappingsType.BIOMES,
+                (javaId, entry) -> {
+                    mappingEntries.put(javaId, entry);
+                    applyMappingEntry(entry);
+                });
+        if (!mappingEntries.isEmpty()) {
+            packDirty.set(true);
+            GeyserImpl.getInstance().getLogger().info(
+                    "Custom biomes: loaded " + mappingEntries.size()
+                            + " biome mapping(s) from custom_mappings/");
+        }
+    }
+
+    /**
+     * Apply one mapping entry into the live definition table (used at load and when resolving).
+     */
+    public void applyMappingEntry(BiomeMappingEntry entry) {
+        if (!enabled || entry == null) {
+            return;
+        }
+        String id = entry.javaIdentifier();
+        int vanillaId = Registries.BIOME_IDENTIFIERS.get().getOrDefault(id, -1);
+        boolean customNetwork = vanillaId < 0;
+        int networkId;
+        if (customNetwork) {
+            if (entry.preferredBedrockId() != null && entry.preferredBedrockId() >= CUSTOM_BIOME_ID_START) {
+                synchronized (idMap) {
+                    idMap.put(id, entry.preferredBedrockId());
+                    nextId.updateAndGet(c -> Math.max(c, entry.preferredBedrockId() + 1));
+                    dirty.set(true);
+                }
+                networkId = entry.preferredBedrockId();
+            } else {
+                networkId = allocateCustomId(id);
+            }
+        } else {
+            networkId = vanillaId;
+        }
+
+        Integer grass = entry.grassColor();
+        Integer foliage = entry.foliageColor();
+        if (customNetwork) {
+            if (grass == null) {
+                grass = JavaBiomeEffectsParser.approximateGrassColor(entry.temperature(), entry.downfall());
+            }
+            if (foliage == null) {
+                foliage = JavaBiomeEffectsParser.approximateFoliageColor(entry.temperature(), entry.downfall());
+            }
+        } else if (!entry.hasAnyColor()) {
+            // Vanilla with empty mapping — nothing to do
+            return;
+        }
+
+        String bedrockIdentifier = customNetwork
+                ? CustomBiomeDefinition.toBedrockIdentifier(id)
+                : id;
+        registerOrUpdate(new CustomBiomeDefinition(
+                id,
+                bedrockIdentifier,
+                networkId,
+                customNetwork,
+                entry.temperature(),
+                entry.downfall(),
+                entry.rain(),
+                grass,
+                foliage,
+                entry.dryFoliageColor(),
+                entry.waterColor(),
+                entry.skyColor(),
+                entry.fogColor(),
+                entry.tags()
+        ));
+    }
+
+    public boolean hasMapping(String javaIdentifier) {
+        return javaIdentifier != null && mappingEntries.containsKey(javaIdentifier);
+    }
+
+    public @Nullable BiomeMappingEntry mapping(String javaIdentifier) {
+        return javaIdentifier == null ? null : mappingEntries.get(javaIdentifier);
+    }
+
     public void savePersistedIds() {
         if (!dirty.get()) {
             return;
@@ -155,7 +253,11 @@ public final class CustomBiomeRegistry {
     }
 
     /**
-     * Resolve the Bedrock biome ID for a Java registry entry, registering custom biomes as needed.
+     * Resolve the Bedrock biome ID for a Java registry entry.
+     * <p>
+     * Colors and pack entries come only from {@code custom_mappings}. Unmapped vanilla biomes keep
+     * stock looks. Unmapped custom biomes get a stable network ID so chunks render, but no colors
+     * until a mapping file includes them.
      */
     public int resolveBedrockId(RegistryEntryContext entry) {
         String javaIdentifier = entry.id().asString();
@@ -165,112 +267,19 @@ public final class CustomBiomeRegistry {
             return vanillaId >= 0 ? vanillaId : 0;
         }
 
-        NbtMap data = entry.data();
-        JavaBiomeEffectsParser.ParsedEffects effects = JavaBiomeEffectsParser.parse(data);
+        BiomeMappingEntry mapped = mappingEntries.get(javaIdentifier);
+        if (mapped != null) {
+            applyMappingEntry(mapped);
+            CustomBiomeDefinition def = definitions.get(javaIdentifier);
+            return def != null ? def.bedrockId() : (vanillaId >= 0 ? vanillaId : allocateCustomId(javaIdentifier));
+        }
 
         if (vanillaId >= 0) {
-            // Vanilla network ID — only track if the datapack actually set visual overrides.
-            boolean hasOverride = effects.grassColor() != null || effects.foliageColor() != null
-                    || effects.dryFoliageColor() != null || effects.waterColor() != null
-                    || effects.skyColor() != null;
-            if (hasOverride) {
-                registerOrUpdate(new CustomBiomeDefinition(
-                        javaIdentifier,
-                        vanillaId,
-                        false,
-                        effects.temperature(),
-                        effects.downfall(),
-                        effects.rain(),
-                        effects.grassColor(),
-                        effects.foliageColor(),
-                        effects.dryFoliageColor(),
-                        effects.waterColor(),
-                        effects.skyColor(),
-                        effects.fogColor(),
-                        effects.tags()
-                ));
-            }
             return vanillaId;
         }
 
-        // Custom Java biome: unique network ID + BP-registered identifier for per-biome grass/foliage.
-        Integer grass = effects.grassColor();
-        Integer foliage = effects.foliageColor();
-        if (grass == null) {
-            grass = JavaBiomeEffectsParser.approximateGrassColor(effects.temperature(), effects.downfall());
-        }
-        if (foliage == null) {
-            foliage = JavaBiomeEffectsParser.approximateFoliageColor(effects.temperature(), effects.downfall());
-        }
-        int networkId = allocateCustomId(javaIdentifier);
-        String bedrockIdentifier = CustomBiomeDefinition.toBedrockIdentifier(javaIdentifier);
-        registerOrUpdate(new CustomBiomeDefinition(
-                javaIdentifier,
-                bedrockIdentifier,
-                networkId,
-                true,
-                effects.temperature(),
-                effects.downfall(),
-                effects.rain(),
-                grass,
-                foliage,
-                effects.dryFoliageColor(),
-                effects.waterColor(),
-                effects.skyColor(),
-                effects.fogColor(),
-                effects.tags()
-        ));
-        return networkId;
-    }
-
-    /**
-     * Register a biome definition produced by the datapack converter (pre-warm / offline).
-     */
-    public void registerFromConverter(CustomBiomeDefinition definition) {
-        if (!enabled || definition == null) {
-            return;
-        }
-        String id = definition.javaIdentifier();
-        int vanillaId = Registries.BIOME_IDENTIFIERS.get().getOrDefault(id, -1);
-        if (vanillaId >= 0) {
-            // Only keep vanilla overrides that actually change colors
-            if (definition.hasClientColors()) {
-                registerOrUpdate(new CustomBiomeDefinition(
-                        id, id, vanillaId, false,
-                        definition.temperature(), definition.downfall(), definition.rain(),
-                        definition.grassColor(), definition.foliageColor(), definition.dryFoliageColor(),
-                        definition.waterColor(), definition.skyColor(), definition.fogColor(),
-                        definition.tags()
-                ));
-            }
-            return;
-        }
-        Integer grass = definition.grassColor();
-        Integer foliage = definition.foliageColor();
-        if (grass == null) {
-            grass = JavaBiomeEffectsParser.approximateGrassColor(definition.temperature(), definition.downfall());
-        }
-        if (foliage == null) {
-            foliage = JavaBiomeEffectsParser.approximateFoliageColor(definition.temperature(), definition.downfall());
-        }
-        int networkId = allocateCustomId(id);
-        String bedrockIdentifier = CustomBiomeDefinition.toBedrockIdentifier(id);
-        registerOrUpdate(new CustomBiomeDefinition(
-                id,
-                bedrockIdentifier,
-                networkId,
-                true,
-                definition.temperature(),
-                definition.downfall(),
-                definition.rain(),
-                grass,
-                foliage,
-                definition.dryFoliageColor(),
-                definition.waterColor(),
-                definition.skyColor(),
-                definition.fogColor(),
-                definition.tags()
-        ));
+        // Unmapped custom biome: network ID only (no auto colors from the Java registry).
+        return allocateCustomId(javaIdentifier);
     }
 
     private void registerOrUpdate(CustomBiomeDefinition definition) {

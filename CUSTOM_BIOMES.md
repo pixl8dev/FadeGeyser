@@ -1,41 +1,43 @@
 # Custom Biome Colors (FadeGeyser)
 
-Exact **grass**, **foliage**, and **water** colors from Java datapacks (e.g. **Terralith**) for Bedrock clients — **without breaking a vanilla dimension**.
+Exact **grass**, **foliage**, **dry foliage** (leaf litter), and **water** colors for custom Java biomes on Bedrock — **without breaking a vanilla dimension**.
+
+## Configure with mapping files
+
+Colors come **only** from `custom_mappings/*.json` under the `"biomes"` key (same directory as custom items).
+
+There is **no** Paper/datapack auto-scan. Generate mappings with Rainbow, a converter, or by hand.
+
+→ Full format and workflow: **[CUSTOM_BIOME_MAPPINGS.md](CUSTOM_BIOME_MAPPINGS.md)**
+
+```
+plugins/Geyser-*/custom_mappings/my_biomes.json
+```
 
 ## Design rules
 
 | Rule | Why |
 |------|-----|
-| Only non-`minecraft:` biomes get custom network IDs (≥30000) | Vanilla dimension keeps normal Bedrock biome IDs |
-| Custom biomes never reuse vanilla network IDs | Would recolor real vanilla biomes |
+| Only mapped non-`minecraft:` biomes get custom network IDs (≥30000) | Vanilla dimension keeps normal Bedrock biome IDs |
+| Colors only from `custom_mappings` | Velocity-friendly; same workflow as custom items |
 | Colormap base stays stock vanilla; exact colors only in a reserved band | Vanilla climates still sample normal pixels |
-| Exact hex from Java registry / datapack | Matches Java client |
-| Behavior pack registers custom biome identifiers | Client needs a real biome identity for custom IDs |
-
-Vanilla biomes are only recolored if Java actually overrode their effects (same as Java singleplayer).
+| Behavior pack registers mapped custom biome identifiers | Client needs a real biome identity for custom IDs |
 
 ## Pipeline
 
 ```
-Java registry / Terralith.zip
+custom_mappings "biomes"
         │
-        ├─ minecraft:*  → vanilla Bedrock ID (+ optional RP color if Java overrode effects)
-        │                 vanilla climate → vanilla pixels on stock colormap
+        ├─ minecraft:*  → vanilla Bedrock ID (+ optional RP color if mapped)
         │
-        └─ terralith:*  → custom ID 30000+
-                           ├─ Behavior pack biomes/*.json   (register identifier)
-                           ├─ Resource pack textures/colormap/grass.png + foliage.png + dry_foliage.png
-                           │     (exact Java RGB at reserved pixels; leaf litter via dry_foliage)
-                           ├─ BiomeDefinitionList climate → those pixels + exact mapWaterColor
-                           └─ client_biomes/*.json          (exact hex backup)
+        └─ other:*      → custom ID 30000+
+                           ├─ Behavior pack biomes/*.json
+                           ├─ Resource pack colormaps (grass + foliage + dry_foliage)
+                           ├─ BiomeDefinitionList climate + mapWaterColor
+                           └─ client_biomes/*.json (hex backup)
 ```
 
-**Why colormaps?** Protocol has no grass RGB field (only water). Multiplayer often ignores
-`grass_appearance` for custom network IDs even when a BP is applied. Sampling exact pixels via
-network temperature/downfall matches Java hex. Vanilla dimension biomes keep stock climates →
-stock colormap pixels → normal vanilla look.
-
-Same identifier string in BP, RP, and definition list (e.g. `terralith:moonlight_grove`).
+**Why colormaps?** Protocol has no grass RGB field (only water). Sampling exact pixels via network temperature/downfall matches Java hex.
 
 ## Config
 
@@ -44,30 +46,17 @@ gameplay:
   enable-custom-biomes: true
   generate-custom-biome-resource-pack: true
   custom-biome-pack-mode: full   # full | water | none
-  custom-biome-datapack-paths:
-    - /path/to/Terralith.zip
 ```
-
-Pre-warm from the datapack so the first Bedrock join already has colors (packs negotiate before the Java registry arrives).
 
 ## Packs
 
-Generated under `cache/custom_biomes/`:
+Generated at runtime under `cache/custom_biomes/`:
 
-- `custom_biomes_bp.mcpack` — behavior pack (custom biomes only)
-- `custom_biomes.mcpack` — resource pack (exact colors)
+- `custom_biomes_bp.mcpack` — behavior pack
+- `custom_biomes.mcpack` — resource pack
 - `id_map.json` — stable Java → custom network ID
 
-User files in `packs/` are never removed. Color RP is high priority.
-
-After updates, delete `cache/custom_biomes/` and rejoin so clients re-download (UUID/version bumps also force this).
-
-## Two dimensions
-
-| Dimension | Biomes | Bedrock |
-|-----------|--------|---------|
-| Vanilla | `minecraft:*` | Default IDs and looks |
-| Terralith | `terralith:*` | Custom IDs + BP/RP exact colors |
+User files in `packs/` are never removed.
 
 ## Disable
 
