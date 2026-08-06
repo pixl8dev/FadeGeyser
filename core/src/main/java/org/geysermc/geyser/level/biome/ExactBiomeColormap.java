@@ -59,11 +59,16 @@ import java.util.Objects;
 public final class ExactBiomeColormap {
     private static final int SIZE = 256;
     /**
-     * Reserved band: x in [128, 255], y in [252, 255] (512 slots).
+     * Reserved band: x in [128, 255], y in [252, 255].
      * Avoids the hot-dry corner (x≈0, y≈255) used by deserts and similar.
+     * <p>
+     * Pixel {@code (255, 255)} is excluded: after temperature clamp, all frozen/snowy vanilla
+     * biomes sample that exact pixel. Usable capacity is therefore 511 slots, not 512.
      */
     private static final int RESERVE_X0 = 128;
     private static final int RESERVE_Y0 = 252;
+    /** Band width × height minus the forbidden cold corner (255, 255). */
+    private static final int MAX_USABLE_SLOTS = (SIZE - RESERVE_X0) * (SIZE - RESERVE_Y0) - 1;
 
     private final Map<String, Climate> climateByBedrockId = new LinkedHashMap<>();
     private byte[] grassPng = new byte[0];
@@ -152,15 +157,11 @@ public final class ExactBiomeColormap {
     }
 
     private static int[] slotToXy(int slot) {
-        // 128 wide × 4 rows = 512 slots
+        // 128 × 4 = 512 cells; skip last cell (255, 255) → 511 usable.
         int width = SIZE - RESERVE_X0;
-        int x = RESERVE_X0 + (slot % width);
-        int y = RESERVE_Y0 + (slot / width);
-        if (y >= SIZE) {
-            // Overflow: wrap within band (still better than crashing)
-            y = RESERVE_Y0 + (slot % (SIZE - RESERVE_Y0));
-            x = RESERVE_X0 + ((slot / (SIZE - RESERVE_Y0)) % width);
-        }
+        int index = Math.floorMod(slot, MAX_USABLE_SLOTS);
+        int x = RESERVE_X0 + (index % width);
+        int y = RESERVE_Y0 + (index / width);
         return new int[]{x, y};
     }
 
